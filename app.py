@@ -493,14 +493,15 @@ def set_balance(message):
     bot.reply_to(message, f"Баланс пользователя {username} установлен на {amount} руб.")
 
 
-# === Запуск приложения ===
 if __name__ == '__main__':
     init_db()
-
-    # Запуск бота в отдельном потоке
+    print("✅ База данных инициализирована")
+    
     bot_thread = threading.Thread(target=bot.polling, kwargs={'none_stop': True})
+    bot_thread.daemon = True
     bot_thread.start()
+    print("🤖 Telegram бот запущен")
 
-    # Запуск Flask сервера
     port = int(os.getenv("PORT", 8080))
+    print(f"🌐 Запускаю Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
