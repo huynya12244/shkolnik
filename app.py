@@ -23,7 +23,7 @@ TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Инициализация бота
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = '7695860708:AAHDA-80C8Pn9rixjmhPSRwhXvEsi82WQ6w'
 if not BOT_TOKEN:
     raise Exception("BOT_TOKEN не установлен в .env")
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -179,7 +179,7 @@ def send_broadcast_message(message_text):
 # === Flask маршруты ===
 @app.route('/')
 def index():
-    return "ANO Chat Bot работает!", 200
+    return "Bot работает!", 200
 
 @app.route('/add_user', methods=['POST'])
 def add_user_to_db():
@@ -497,11 +497,11 @@ if __name__ == '__main__':
     init_db()
     print("✅ База данных инициализирована")
     
-    bot_thread = threading.Thread(target=bot.polling, kwargs={'none_stop': True})
+    bot_thread = threading.Thread(target=bot.polling, kwargs=dict(none_stop=True))
     bot_thread.daemon = True
     bot_thread.start()
     print("🤖 Telegram бот запущен")
 
-    port = int(os.getenv("PORT", 8080))
+    port = 8080
     print(f"🌐 Запускаю Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
