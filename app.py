@@ -6,7 +6,7 @@ import threading
 from flask import Flask, request, jsonify
 import telebot
 from dotenv import load_dotenv
-import pandas as pd
+import xlsxwriter
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -69,7 +69,6 @@ def init_db():
         cursor.execute('ALTER TABLE users ADD COLUMN invited_by_username TEXT')
     conn.commit()
     conn.close()
-
 
 # === Функции работы с БД ===
 def generate_promo_code(length=8):
@@ -143,12 +142,17 @@ def update_referral_payment(inviter_id, amount):
         conn.commit()
         conn.close()
 
-def get_all_users():
+def get_all_users_data():
     with db_lock:
         conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql_query("SELECT * FROM users", conn)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users")
+        rows = cursor.fetchall()
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [desc[1] for desc in cursor.description]
         conn.close()
-        return df
+    data = [dict(zip(columns, row)) for row in rows]
+    return data
 
 def get_referrals_count(telegram_id):
     with db_lock:
@@ -212,7 +216,6 @@ def add_user_to_db():
     except sqlite3.IntegrityError:
         return jsonify({"error": "User already exists"}), 409
 
-
 # === Telegram команды и логика ===
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -238,10 +241,7 @@ def start(message):
         bot.send_message(message.chat.id, "Введите промокод, если у вас есть, или нажмите «Пропустить»:", reply_markup=keyboard)
     user_states[message.chat.id] = 'awaiting_promo'
 
-
-# --- Остальные обработчики из оригинального файла ---
-# Пример продолжения (остальную часть вы можете скопировать аналогично):
-
+# --- Остальные обработчики ---
 @bot.message_handler(func=lambda m: user_states.get(m.chat.id) == 'awaiting_promo')
 def handle_promo_input(message):
     chat_id = message.chat.id
@@ -279,7 +279,6 @@ def handle_promo_input(message):
     bot.send_message(chat_id, user_info, reply_markup=inline_kb)
     bot.send_message(chat_id, "Спасибо! Промокод принят. Вы перешли в главное меню.", reply_markup=reply_kb)
     user_states.pop(chat_id, None)
-
 
 def get_main_menu(user_id):
     conn = sqlite3.connect(DB_PATH)
@@ -319,7 +318,6 @@ def get_main_menu(user_id):
         main_keyboard.add(telebot.types.KeyboardButton("6. Контакт с менеджером"))
     return user_info, inline_keyboard, main_keyboard
 
-
 def is_admin(telegram_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -328,29 +326,31 @@ def is_admin(telegram_id):
     conn.close()
     return result and result[0] == 'admin'
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("copy_promo:"))
 def handle_copy_promo(call):
     promo_code = call.data.split(":")[1]
     bot.answer_callback_query(call.id, text=f"Промокод {promo_code} скопирован!", show_alert=False)
     bot.send_message(call.message.chat.id, f"`{promo_code}`", parse_mode="Markdown")
 
-
 # === Админ-команды ===
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "Посмотреть пользователей")
 def send_users_excel(message):
-    df = get_all_users()
+    data = get_all_users_data()
     file_path = os.path.join(TEMP_DIR, "users.xlsx")
-    df.to_excel(file_path, index=False)
+    workbook = xlsxwriter.Workbook(file_path)
+    worksheet = workbook.add_worksheet()
+    headers = data[0].keys() if data else []
+    worksheet.write_row(0, 0, headers)
+    for row_num, row_data in enumerate(data):
+        worksheet.write_row(row_num + 1, 0, row_data.values())
+    workbook.close()
     with open(file_path, "rb") as f:
         bot.send_document(message.chat.id, f)
-
 
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "Проверить количество людей")
 def request_user_id(message):
     bot.send_message(message.chat.id, "Введите Telegram ID пользователя:")
     user_states[message.chat.id] = 'awaiting_user_id_for_referrals'
-
 
 @bot.message_handler(func=lambda m: user_states.get(m.chat.id) == 'awaiting_user_id_for_referrals')
 def show_referrals_count(message):
@@ -364,12 +364,10 @@ def show_referrals_count(message):
     bot.send_message(message.chat.id, "Главное меню:", reply_markup=reply_kb)
     user_states.pop(message.chat.id, None)
 
-
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "Сделать рассылку")
 def request_broadcast_message(message):
     bot.send_message(message.chat.id, "Введите текст для рассылки:")
     user_states[message.chat.id] = 'awaiting_broadcast_message'
-
 
 @bot.message_handler(func=lambda m: user_states.get(m.chat.id) == 'awaiting_broadcast_message')
 def do_broadcast(message):
@@ -382,16 +380,15 @@ def do_broadcast(message):
     bot.send_message(message.chat.id, "Главное меню:", reply_markup=reply_kb)
     user_states.pop(message.chat.id, None)
 
-
 # === Обработчики обычного меню ===
 @bot.message_handler(func=lambda m: m.text == "1. Наша группа")
-def our_group(message): bot.reply_to(message, "Ссылка на нашу группу: https://t.me/+phaj3N7gq6wxODQy")
+def our_group(message): bot.reply_to(message, "Ссылка на нашу группу: https://t.me/+phaj3N7gq6wxODQy") 
 
 @bot.message_handler(func=lambda m: m.text == "2. Наши отзывы")
 def reviews(message): bot.reply_to(message, "💬 Ознакомьтесь с отзывами наших выпускников в группе @otzivieoge — они уже оценили качество и надёжность сервиса")
 
 @bot.message_handler(func=lambda m: m.text == "3. О нас")
-def about_us(message): bot.reply_to(message, "Мы работаем с 2021 года и уже помогли БОЛЕЕ 500 ребятам поступить в вузы с отличными баллами\n\nПОЧЕМУ МЫ ЛУЧШЕ ‼️\n\n➖В отличие от «готовых ответов» от мошенников, мы получаем варианты КИМ одни из первых за 10-12 часов до экзамена;\n➖Наша команда репетиторов решает их в течение 2–3 часов и передаёт вам свежие, полностью проверенные решения;\n➖Мы полностью РУЧАЕМСЯ ЗА РЕЗУЛЬТАТ: если что-то пойдёт не так, вернём вам полную оплату без лишних вопросов;\nБоишься, что не сдашь? ПЕРЕСТРАХУЙСЯ С НАМИ! Мы понимаем на сколько этот экзамен может быть важен для вас.")
+def about_us(message): bot.reply_to(message, "Мы работаем с 2021 года и уже помогли БОЛЕЕ 500 ребятам поступить в вузы с отличными баллами\n\nПОЧЕМУ МЫ ЛУЧШЕ ‼️\n➖В отличие от «готовых ответов» от мошенников, мы получаем варианты КИМ одни из первых за 10-12 часов до экзамена;\n➖Наша команда репетиторов решает их в течение 2–3 часов и передаёт вам свежие, полностью проверенные решения;\n➖Мы полностью РУЧАЕМСЯ ЗА РЕЗУЛЬТАТ: если что-то пойдёт не так, вернём вам полную оплату без лишних вопросов;\nБоишься, что не сдашь? ПЕРЕСТРАХУЙСЯ С НАМИ! Мы понимаем насколько этот экзамен может быть важен для вас.")
 
 @bot.message_handler(func=lambda m: m.text == "4. Каталог")
 def catalog(message):
@@ -436,7 +433,6 @@ def go_back(message):
     bot.send_message(message.chat.id, user_info, reply_markup=inline_kb)
     bot.send_message(message.chat.id, "Главное меню:", reply_markup=reply_kb)
 
-
 # === Команды для администратора ===
 @bot.message_handler(commands=['setadmin'])
 def set_admin(message):
@@ -456,7 +452,6 @@ def set_admin(message):
         conn.commit()
         conn.close()
     bot.reply_to(message, f"Пользователь {target_id} назначен администратором.")
-
 
 @bot.message_handler(commands=['setbalance'])
 def set_balance(message):
@@ -492,16 +487,28 @@ def set_balance(message):
         conn.close()
     bot.reply_to(message, f"Баланс пользователя {username} установлен на {amount} руб.")
 
+# === Экспорт пользователей в Excel ===
+def create_users_excel_file(file_path):
+    data = get_all_users_data()
+    workbook = xlsxwriter.Workbook(file_path)
+    worksheet = workbook.add_worksheet()
+    if data:
+        headers = data[0].keys()
+        worksheet.write_row(0, 0, headers)
+        for row_num, row_data in enumerate(data):
+            worksheet.write_row(row_num + 1, 0, row_data.values())
+    workbook.close()
 
+# === Запуск приложения ===
 if __name__ == '__main__':
     init_db()
     print("✅ База данных инициализирована")
     
-    bot_thread = threading.Thread(target=bot.polling, kwargs=dict(none_stop=True))
+    bot_thread = threading.Thread(target=bot.polling, kwargs={'none_stop': True})
     bot_thread.daemon = True
     bot_thread.start()
     print("🤖 Telegram бот запущен")
 
-    port = 8080
+    port = int(os.getenv("PORT", 8080))
     print(f"🌐 Запускаю Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
